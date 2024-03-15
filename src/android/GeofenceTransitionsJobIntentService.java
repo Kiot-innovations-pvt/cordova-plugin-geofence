@@ -61,7 +61,10 @@ public class GeofenceTransitionsJobIntentService extends JobIntentService {
         store = new GeoNotificationStore(this);
         //context = MyApp.getContext();
     }
-
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+    }
     /**
      * Convenience method for enqueuing work in to this service.
      */
@@ -76,62 +79,68 @@ public class GeofenceTransitionsJobIntentService extends JobIntentService {
      */
     @Override
     protected void onHandleWork(Intent intent) {
-        Logger logger = Logger.getLogger();
-        logger.log(Log.DEBUG, "Geofence transition detected");
-        GeofencingEvent geofencingEvent = GeofencingEvent.fromIntent(intent);
-        if (geofencingEvent.hasError()) {
-            String errorMessage = GeofenceErrorMessages.getErrorString(this,
-                    geofencingEvent.getErrorCode());
-            Log.e(TAG, errorMessage);
-            return;
-        }
-
-        // Get the transition type.
-        int geofenceTransition = geofencingEvent.getGeofenceTransition();
-
-        // Test that the reported transition was of interest.
-        if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_ENTER ||
-                geofenceTransition == Geofence.GEOFENCE_TRANSITION_EXIT) {
+        try{
+            Logger logger = Logger.getLogger();
             logger.log(Log.DEBUG, "Geofence transition detected");
-            // Get the geofences that were triggered. A single event can trigger multiple geofences.
-            List<Geofence> triggeringGeofences = geofencingEvent.getTriggeringGeofences();
-            List<GeoNotification> geoNotifications = new ArrayList<GeoNotification>();
-            for (Geofence fence : triggeringGeofences) {
-                String fenceId = fence.getRequestId();
-                GeoNotification geoNotification = store
-                        .getGeoNotification(fenceId);
-
-                if (geoNotification != null) {
-                    if (geoNotification.notification != null) {
-                        // notifier.notify(geoNotification.notification);
-                    }
-                    geoNotification.transitionType = geofenceTransition;
-                    geoNotifications.add(geoNotification);
-                }
+            GeofencingEvent geofencingEvent = GeofencingEvent.fromIntent(intent);
+            if (geofencingEvent!= null && geofencingEvent.hasError()) {
+                String errorMessage = GeofenceErrorMessages.getErrorString(this,
+                        geofencingEvent.getErrorCode());
+                Log.e(TAG, errorMessage);
+                return;
             }
+            if(geofencingEvent!= null){
+                // Get the transition type.
+                int geofenceTransition = geofencingEvent.getGeofenceTransition();
 
-            if (geoNotifications.size() > 0) {
-                //broadcastIntent.putExtra("transitionData", Gson.get().toJson(geoNotifications));
-                try {
+                // Test that the reported transition was of interest.
+                if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_ENTER ||
+                        geofenceTransition == Geofence.GEOFENCE_TRANSITION_EXIT) {
+                    logger.log(Log.DEBUG, "Geofence transition detected");
+                    // Get the geofences that were triggered. A single event can trigger multiple geofences.
+                    List<Geofence> triggeringGeofences = geofencingEvent.getTriggeringGeofences();
+                    List<GeoNotification> geoNotifications = new ArrayList<GeoNotification>();
+                    for (Geofence fence : triggeringGeofences) {
+                        String fenceId = fence.getRequestId();
+                        GeoNotification geoNotification = store
+                                .getGeoNotification(fenceId);
 
-                    volleyApi.tryRelogin(new VolleyCallback(){
-                        @Override
-                        public void onSuccess(JSONObject result) throws JSONException {
-                            JSONObject userData = new JSONObject(localStorage.getItem("user"));
-                            if(result.get("restype")=="success"){
-                                volleyApi.afterRelogin(true,result,userData);
-                                onTransitionReceived(geoNotifications);
+                        if (geoNotification != null) {
+                            if (geoNotification.notification != null) {
+                                // notifier.notify(geoNotification.notification);
                             }
+                            geoNotification.transitionType = geofenceTransition;
+                            geoNotifications.add(geoNotification);
                         }
-                    });
-                } catch (JSONException e) {
-                    e.printStackTrace();
+                    }
+
+                    if (geoNotifications.size() > 0) {
+                        //broadcastIntent.putExtra("transitionData", Gson.get().toJson(geoNotifications));
+                        try {
+
+                            volleyApi.tryRelogin(new VolleyCallback(){
+                                @Override
+                                public void onSuccess(JSONObject result) throws JSONException {
+                                    JSONObject userData = new JSONObject(localStorage.getItem("user"));
+                                    if(result.get("restype")=="success"){
+                                        volleyApi.afterRelogin(true,result,userData);
+                                        onTransitionReceived(geoNotifications);
+                                    }
+                                }
+                            });
+                        } catch (JSONException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                } else {
+                    // Log the error.
+                    Log.e(TAG, "Geofence transition error: invalid transition type %1$d");
                 }
             }
-        } else {
-            // Log the error.
-            Log.e(TAG, "Geofence transition error: invalid transition type %1$d");
+        } catch(Exception e) {
+            Log.e(TAG, "Error occurred in onHandleWork: " + e.getMessage());
         }
+
     }
 
     public void onTransitionReceived(List<GeoNotification> notifications) throws JSONException {
@@ -160,10 +169,11 @@ public class GeofenceTransitionsJobIntentService extends JobIntentService {
                     switch_obj.put("switch_state",act.get("switch_value"));
                     switch_obj.put("key",act.get("key"));
                     switch_obj.put("mobId",act.get("mobId"));
-                    switch_obj.put("switch_appliance_id",act.get("switch_appliance"));
+                    switch_obj.put("id",act.get("switch_appliance"));
                    // switch_obj.put("dimm_value",act.get("dimm_value"));
                     switch_obj.put("act_type",act.get("type"));
-                    switch_obj.put("userdevice",act.get("device"));
+                    switch_obj.put("userdevice",act.get("userdevice"));
+                    switch_obj.put("device",act.get("device"));
                     volleyApi.postTriggerSwitch(switch_obj, new VolleyCallback() {
                         @Override
                         public void onSuccess(JSONObject result) throws JSONException {
@@ -252,7 +262,7 @@ public class GeofenceTransitionsJobIntentService extends JobIntentService {
 
         // Get a PendingIntent containing the entire back stack.
         PendingIntent notificationPendingIntent =
-                stackBuilder.getPendingIntent(0, PendingIntent.FLAG_UPDATE_CURRENT);
+                stackBuilder.getPendingIntent(0, PendingIntent.FLAG_MUTABLE);
 
         // Get a notification builder that's compatible with platform versions >= 4
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this);
